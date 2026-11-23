@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#17141a">
+<title>人狼の館</title>
+<style>
+:root{color-scheme:dark;--bg:#171419;--panel:#211c24;--edge:#4c3947;--ink:#f2e7db;--muted:#c2b0ba;--gold:#f0ca82;--red:#f0a8aa;font:16px/1.65 system-ui,sans-serif}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;color:var(--ink);background:radial-gradient(ellipse at top,#392431,var(--bg) 65%)}main{width:min(1380px,100%);padding:30px clamp(14px,3vw,42px) 54px;margin:auto}
+h1,h2,h3,p{margin:0}h1,h2{font-family:"Yu Mincho",YuMincho,"Hiragino Mincho ProN",serif}h1{font-size:clamp(1.6rem,3vw,2.6rem);letter-spacing:.12em}h2{font-size:1.45rem}button{font:inherit;cursor:pointer;color:var(--ink);background:#322936;border:1px solid #70586d;border-radius:5px;padding:8px 13px;min-height:44px}button:hover:not(:disabled){background:#4a3749}button:disabled{opacity:.55;cursor:default}button:focus-visible,summary:focus-visible,.corridor:focus-visible{outline:2px solid var(--gold);outline-offset:2px}.primary{background:#694346;border-color:#be8677;font-weight:700}.danger{color:var(--red);background:#39272f}.cover{min-height:calc(100vh - 84px);display:grid;justify-items:center;align-content:center;gap:20px;text-align:center;padding:25px;border:1px solid var(--edge);background:radial-gradient(ellipse at center,#392932,#19151c 76%)}.cover h1{font-size:clamp(2.8rem,10vw,6rem);color:var(--gold)}.crest{color:var(--gold);font-size:2.2rem}.tagline{font-family:"Yu Mincho",serif;color:var(--gold);font-size:clamp(1rem,3vw,1.5rem)}.cover .primary{margin-top:12px;padding:12px 32px}
+.top,.section-heading{display:flex;align-items:center;justify-content:space-between;gap:8px 24px;flex-wrap:wrap}.top{border-bottom:1px solid var(--edge);padding-bottom:12px}.top b,.stats b,.reading strong{color:var(--gold)}.stats{display:flex;flex-wrap:wrap;gap:5px 22px;margin:15px 0 24px}.stats span,.section-heading p,.mobile-note,.ledger li{color:var(--muted)}.section-heading{margin-bottom:10px}.corridor{overflow-x:auto;padding:3px 0 10px}.rooms{display:grid;grid-template-columns:repeat(6,minmax(150px,1fr));gap:10px;min-width:950px}
+.room{display:grid;grid-template-rows:auto 100px auto minmax(90px,1fr) auto auto;gap:8px;text-align:center;padding:10px;background:var(--panel);border:1px solid var(--edge);border-radius:9px}.room h3{font-family:Georgia,serif;color:var(--gold);font-size:1.6rem}.room h3 small{font: .75rem system-ui;margin-left:3px}.portrait{position:relative;overflow:hidden;border-radius:70px 70px 4px 4px;border:1px solid var(--edge);background:radial-gradient(ellipse at 50% 45%,#67444f,#332733 70%)}.portrait span{position:absolute;left:50%;bottom:-25px;width:74px;height:78px;transform:translateX(-50%);border-radius:48% 48% 0 0;background:#151117}.portrait span::before{content:"";position:absolute;left:50%;top:-34px;width:36px;height:44px;transform:translateX(-50%);border-radius:48%;background:#151117}.revealed .portrait{filter:grayscale(1)}.identity{font-size:.8rem;color:var(--muted)}.speech{font-size:.88rem;text-align:left;padding:9px;background:#2c2430;border-radius:5px}.reading{min-height:56px;display:flex;align-items:center;justify-content:center;gap:8px;border-top:1px solid var(--edge);font-size:.75rem;color:var(--muted)}.reading strong{font:700 2.25rem Georgia,serif}.actions{display:grid;grid-template-columns:1fr 1fr;gap:4px}.actions button{padding:5px;font-size:.85rem}
+.scene,.ledger{margin:20px 0;padding:16px 20px;border:1px solid var(--edge);border-radius:8px;background:#231b25}.scene p{margin:8px 0 14px}.night{background:#241821;animation:dusk .65s ease-out}.won h2{color:var(--gold)}.lost h2{color:var(--red)}@keyframes dusk{from{opacity:.35;transform:translateY(-5px)}to{opacity:1;transform:none}}.ledger details{margin-top:15px}.ledger summary{cursor:pointer;padding:7px 0}.ledger h3{margin-top:12px}.ledger ul{margin:4px 0;padding-left:24px}.pairs{margin-top:10px}.pairs ul{display:flex;flex-wrap:wrap;gap:4px 28px}.mobile-note{display:none;font-size:.8rem}.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}@media(max-width:1020px){.mobile-note{display:block}}@media(max-width:520px){main{padding-top:18px}.room{padding:8px}.section-heading p{font-size:.9rem}}@media(prefers-reduced-motion:reduce){.night{animation:none}}
+</style>
+
+</head>
+<body>
+<main id="app"></main>
+<div id="announcement" class="sr-only" role="status" aria-live="polite"></div>
+<script>
+(() => {
+  'use strict';
+  const rooms = [1, 2, 3, 4, 5, 6];
+  const layouts = rooms.flatMap(a => rooms.filter(b => b > a).map(b => [a, b]));
+  const adjacent = room => rooms.filter(other => Math.abs(other - room) === 1);
+  const count = (wolves, alive, targets) =>
+    targets.filter(room => alive.includes(room) && wolves.includes(room)).length;
+  const role = (wolves, room) => wolves.includes(room) ? '人狼' : '村人';
+  const truth = (claim, wolves, alive) => claim.kind === 'role'
+    ? role(wolves, claim.room) === claim.value
+    : count(wolves, alive, claim.targets) === claim.value;
+
+  function infer(events) {
+    return layouts.filter(wolves => events.every(event => {
+      if (event.kind === 'reveal') return role(wolves, event.room) === event.role;
+      if (event.kind === 'testimony' && wolves.includes(event.speaker)) return true;
+      return truth(event.claim, wolves, event.alive);
+    })).map(pair => [...pair]);
+  }
+
+  function canSolve(candidates, alive, budget, searched = []) {
+    if (!candidates.length) return false;
+    if (alive.some(room => candidates.every(pair => pair.includes(room)))) return true;
+    if (!budget) return false;
+    return alive.filter(room => !searched.includes(room)).some(room => {
+      const targets = adjacent(room);
+      const groups = [[], [], []];
+      for (const pair of candidates) groups[count(pair, alive, targets)].push(pair);
+      const nonempty = groups.filter(group => group.length);
+      return nonempty.length > 1 && nonempty.every(group => canSolve(group, alive, budget - 1, [...searched, room]));
+    });
+  }
+
+  function options(speaker) {
+    const roles = rooms.filter(room => room !== speaker).flatMap(room =>
+      ['人狼', '村人'].map(value => ({ kind: 'role', room, value })));
+    const groups = [adjacent(speaker), [1, 2, 3], [2, 3, 4], [3, 4, 5], [4, 5, 6]];
+    return [...roles, ...groups.flatMap((targets, index) =>
+      Array.from({ length: Math.min(2, targets.length) + 1 }, (_, value) =>
+        ({ kind: 'count', targets, value, neighbor: index === 0 })))];
+  }
+
+  function createGame(random = Math.random) {
+    const pick = values => values[Math.floor(random() * values.length)];
+    const wolves = pick(layouts);
+    let alive = [...rooms];
+    let day = 0;
+    let phase;
+    let remaining;
+    const events = [];
+    const villagers = () => alive.filter(room => !wolves.includes(room));
+    const livingWolves = () => alive.filter(room => wolves.includes(room));
+    const order = values => values.map(value => ({ value, roll: random() }))
+      .sort((a, b) => a.roll - b.roll).map(entry => entry.value);
+
+    function beginDay() {
+      day++;
+      phase = 'day';
+      remaining = 2;
+      const speakers = order(alive);
+      const lying = new Set(livingWolves().filter(() => random() < 0.65));
+      function build(fallback = false) {
+        const batch = [];
+        const liveWolves = order(livingWolves());
+        let villagerIndex = 0;
+        for (const speaker of speakers) {
+          const isWolf = wolves.includes(speaker);
+          const candidates = options(speaker).filter(claim =>
+            truth(claim, wolves, alive) !== lying.has(speaker));
+          let claim;
+          if (fallback && !isWolf) {
+            claim = { kind: 'role', room: liveWolves[villagerIndex++ % liveWolves.length], value: '人狼' };
+          } else if (isWolf) {
+            const publicPairs = infer(events);
+            const ranked = order(candidates).map(candidate => {
+              const plausible = publicPairs.filter(pair =>
+                (!lying.has(speaker) || !pair.includes(speaker)) && truth(candidate, pair, alive)).length;
+              const misdirect = candidate.kind === 'role' && alive.includes(candidate.room)
+                && !truth(candidate, wolves, alive) ? 2 : 0;
+              return { candidate, score: plausible + misdirect };
+            }).sort((a, b) => b.score - a.score);
+            claim = ranked[0].candidate;
+          } else {
+            claim = pick(candidates);
+          }
+          batch.push({ kind: 'testimony', day, speaker, claim, alive });
+        }
+        return batch;
+      }
+      for (let attempt = 0; attempt < 24; attempt++) {
+        const batch = build();
+        if (canSolve(infer([...events, ...batch]), alive, remaining)) {
+          events.push(...batch);
+          return;
+        }
+      }
+      // Give each living wolf multiple truthful accusers if randomized clues leave ambiguity.
+      events.push(...build(true));
+    }
+
+    function finish() {
+      if (!livingWolves().length) phase = 'won';
+      else if (villagers().length <= livingWolves().length) phase = 'lost';
+      else return false;
+      for (const room of alive) reveal(room, 'end');
+      return true;
+    }
+
+    function reveal(room, cause) {
+      events.push({ kind: 'reveal', day, room, role: role(wolves, room), cause });
+      if (cause !== 'end') alive = alive.filter(other => other !== room);
+    }
+
+    const canAct = room => phase === 'day' && alive.includes(room);
+    beginDay();
+    return Object.freeze({
+      view() {
+        return JSON.parse(JSON.stringify({
+          day, phase, remaining, alive, villagers: villagers().length,
+          wolves: livingWolves().length, events, candidates: infer(events)
+        }));
+      },
+      investigate(room) {
+        if (!canAct(room) || !remaining ||
+          events.some(event => event.kind === 'investigation' && event.day === day && event.room === room)) return false;
+        const targets = adjacent(room);
+        events.push({ kind: 'investigation', day, room, alive,
+          claim: { kind: 'count', targets, value: count(wolves, alive, targets) } });
+        remaining--;
+        return true;
+      },
+      seal(room) {
+        if (!canAct(room)) return false;
+        reveal(room, 'sealed');
+        if (!finish()) phase = 'night';
+        return true;
+      },
+      advanceNight() {
+        if (phase !== 'night') return false;
+        if (livingWolves().length && villagers().length) {
+          const ranked = order(villagers()).map(room => ({
+            room, score: infer(events.filter(event =>
+              !(event.kind === 'testimony' && event.speaker === room && event.day === day))).length
+          })).sort((a, b) => b.score - a.score);
+          reveal(ranked[0].room, 'attacked');
+        } else {
+          events.push({ kind: 'skipped', day, reason: livingWolves().length ? '生存村人がいません' : '生存人狼がいません' });
+        }
+        if (!finish()) beginDay();
+        return true;
+      }
+    });
+  }
+
+  function describe(claim) {
+    if (claim.kind === 'role') return claim.room + '号室の元の役職は' + claim.value + 'です。';
+    const location = claim.neighbor ? '私の隣' :
+      claim.targets[0] + '〜' + claim.targets.at(-1) + '号室';
+    return location + 'に生存人狼が' + claim.value + '体います。';
+  }
+
+  const api = { createGame, infer, truth, adjacent, canSolve, describe };
+  if (typeof module === 'object' && module.exports) module.exports = api;
+  else globalThis.Mansion = api;
+})();
+
+(() => {
+  'use strict';
+  const app = document.querySelector('#app');
+  const announcement = document.querySelector('#announcement');
+  let game;
+  let notice = '';
+  let showPairs = false;
+  const captions = { sealed: '封鎖', attacked: '襲撃', end: '試合終了時の公開' };
+
+  function start() {
+    game = Mansion.createGame();
+    notice = '';
+    showPairs = false;
+    render();
+    app.querySelector('h1').focus();
+  }
+
+  function eventText(event) {
+    if (event.kind === 'reveal') return captions[event.cause] + ' · ' + event.room + '号室（' + event.role + '）';
+    if (event.kind === 'skipped') return '襲撃なし · ' + event.reason;
+    if (event.kind === 'investigation') return event.room + '号室を調査 · 隣接する生存人狼 ' + event.claim.value + '体';
+    return event.speaker + '号室「' + Mansion.describe(event.claim) + '」';
+  }
+
+  function roomCard(room, state) {
+    const report = state.events.find(event => event.kind === 'testimony' && event.day === state.day && event.speaker === room);
+    const evidence = state.events.findLast(event => event.kind === 'investigation' && event.room === room);
+    const reveal = state.events.find(event => event.kind === 'reveal' && event.room === room);
+    const active = state.phase === 'day' && state.alive.includes(room);
+    return `<article class="room ${reveal ? 'revealed' : ''}">
+      <h3>${room}<small>号室</small></h3>
+      <div class="portrait" aria-hidden="true"><span></span></div>
+      <p class="identity">${reveal ? reveal.role + (reveal.cause === 'end' ? '' : ' · ' + captions[reveal.cause]) : '正体不明'}</p>
+      <p class="speech">${report ? '「' + Mansion.describe(report.claim) + '」' : '—'}</p>
+      <div class="reading">${evidence ? '<strong>' + evidence.claim.value + '</strong><span>隣接する生存人狼<br>' + evidence.day + '日目の調査</span>' : '調査結果なし'}</div>
+      <div class="actions">
+        <button data-action="investigate" data-room="${room}" aria-label="${room}号室を調査" ${!active || !state.remaining || evidence?.day === state.day ? 'disabled' : ''}>調査</button>
+        <button class="danger" data-action="seal" data-room="${room}" aria-label="${room}号室を封鎖" ${!active ? 'disabled' : ''}>封鎖</button>
+      </div>
+    </article>`;
+  }
+
+  function render() {
+    if (!game) {
+      app.innerHTML = `<section class="cover">
+        <div class="crest" aria-hidden="true">◇</div>
+        <h1>人狼の館</h1>
+        <p class="tagline">証言は嘘をつく。しかし、数字は嘘をつかない。</p>
+        <p>6つの部屋に潜む2体の人狼を探し出せ。<br>住人の証言と隣室の調査結果が、あなたの手がかりになる。</p>
+        <button data-action="start" class="primary">調査を始める</button>
+      </section>`;
+      return;
+    }
+    const state = game.view();
+    const night = state.phase === 'night';
+    const ended = ['won', 'lost'].includes(state.phase);
+    const phase = night ? '夜' : ended ? '終幕' : '昼';
+    const detailsOpen = app.querySelector('#history')?.open ?? false;
+    app.innerHTML = `
+      <header class="top"><h1 tabindex="-1">人狼の館</h1><span>${state.day}日目 <b>· ${phase}</b></span></header>
+      <div class="stats"><span>生存村人 <b>${state.villagers}</b></span><span>生存人狼 <b>${state.wolves}</b></span><span>残り調査 <b>${night || ended ? '—' : state.remaining + ' / 2'}</b></span></div>
+      ${ended ? `<section class="scene ${state.phase}"><h2>${state.phase === 'won' ? '勝利' : '敗北'}</h2>
+        <p>${notice} ${state.phase === 'won' ? 'すべての人狼を封鎖しました。' : '生存村人が生存人狼以下になりました。'}</p>
+        <button data-action="start" class="primary">もう一度遊ぶ</button></section>` :
+        night ? `<section class="scene night"><h2>夜が訪れた</h2><p>${notice} 館の灯りが消え、人狼が動き出す。</p>
+          <button data-action="night" class="primary">襲撃の結果を見る</button></section>` : ''}
+      <section aria-labelledby="rooms-title">
+        <div class="section-heading"><h2 id="rooms-title" tabindex="-1">館の六室</h2><p>${!ended && !night && notice ? notice : '調査で分かるのは、選んだ部屋の左右にいる生存人狼の合計です。'}</p></div>
+        <div class="corridor" tabindex="0" aria-label="部屋一覧。狭い画面では横にスクロールできます。">
+          <div class="rooms">${Array.from({ length: 6 }, (_, i) => roomCard(i + 1, state)).join('')}</div>
+        </div>
+        <p class="mobile-note">横にスクロールして全室を見る</p>
+      </section>
+      <section class="ledger">
+        <button data-action="pairs" aria-expanded="${showPairs}">${showPairs ? '推理候補を隠す' : '推理候補を見る'}</button>
+        ${showPairs ? '<div class="pairs"><p>公開された証言と調査結果に合う、開始時の人狼配置は ' + state.candidates.length + ' 通りです。</p><ul>' +
+          state.candidates.map(pair => '<li>' + pair.join('・') + '号室</li>').join('') + '</ul></div>' : ''}
+        <details id="history" ${detailsOpen ? 'open' : ''}><summary>調査・証言・公開の履歴</summary>
+          ${Array.from({ length: state.day }, (_, i) => state.day - i).map(day =>
+            '<h3>' + day + '日目</h3><ul>' + state.events.filter(event => event.day === day)
+              .map(event => '<li>' + eventText(event) + '</li>').join('') + '</ul>').join('')}
+        </details>
+      </section>`;
+  }
+
+  app.addEventListener('click', event => {
+    const button = event.target.closest('button[data-action]');
+    if (!button) return;
+    const { action, room: number } = button.dataset;
+    if (action === 'start') { start(); return; }
+    const room = Number(number);
+    const previousScroll = app.querySelector('.corridor').scrollLeft;
+    if (action === 'pairs') showPairs = !showPairs;
+    if (action === 'investigate' && game.investigate(room)) {
+      notice = eventText(game.view().events.at(-1));
+    }
+    if (action === 'seal') {
+      if (!window.confirm(room + '号室を封鎖しますか？ 封鎖は1日1回です。')) return;
+      if (game.seal(room)) notice = eventText(game.view().events.findLast(e => e.cause === 'sealed'));
+    }
+    if (action === 'night') {
+      const before = game.view().events.length;
+      if (game.advanceNight()) {
+        const result = game.view().events.slice(before).find(e => e.cause === 'attacked' || e.kind === 'skipped');
+        if (result) notice = eventText(result);
+      }
+    }
+    render();
+    app.querySelector('.corridor').scrollLeft = previousScroll;
+    const target = action === 'pairs' ? app.querySelector('[data-action="pairs"]')
+      : app.querySelector('.scene button') || (action === 'investigate'
+        ? app.querySelector('[data-action="seal"][data-room="' + room + '"]')
+        : app.querySelector('#rooms-title'));
+    target?.focus({ preventScroll: true });
+    if (action !== 'pairs') announcement.textContent = notice;
+  });
+  render();
+})();
+</script>
+</body>
+</html>

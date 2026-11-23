@@ -1,259 +1,229 @@
 (() => {
   'use strict';
-
-  const residents = [
-    ['相沢 澪', '夜勤の看護師', '窓辺の椅子で夜明けを待っていた。', '明け方まで起きていた。廊下はよく響くわ。', true],
-    ['三崎 律', '会社員', '夜中に会社の書類を裁断した。', '夜中は寝ていました。紙の音なんて知りません。', false],
-    ['佐伯 灯', '大学生', '廊下の環境音を課題用に録音した。', '最初の夜、私のドアの向こうで重い足音を録音したよ。', true],
-    ['野上 駿', '配達員', '夜間配達の副業で外出した。', '夜中ずっと部屋にいたよ。', false],
-    ['倉橋 燈子', '古書店員', '獣化後に103号室へ潜んだ。古書店の帳簿は机に置いた。', '帳簿なら机にあります。真夜中に103号室へは行っていません。', false],
-    ['久世 透', '無職の青年', '管理用の音響受信機を修理した。', '受信機を直したよ。録音の照合には佐伯さんの音源が要る。', true]
+  const roles = ['村人', '占い師', '狩人', '記録係', '人狼'];
+  const seats = ['村人', '村人', ...roles.slice(1)];
+  const people = [
+    { id: 'you', name: 'あなた' },
+    { id: 'ren', name: '蓮', description: '濡れた手袋を外し、燭台に目を向ける。' },
+    { id: 'mio', name: '澪', description: '長椅子の端に座り、窓の方を気にしている。' },
+    { id: 'so', name: '奏', description: '戸口にもたれ、廊下の物音に耳を澄ませている。' },
+    { id: 'towa', name: '十和', description: '膝の上で革表紙の帳面を開く。' },
+    { id: 'yui', name: '結', description: 'ランタンを置き、両手を膝の上で重ねる。' }
   ];
-  const rooms = residents.map(([name, job], index) => ({ number: 101 + index, name, job }));
-  const identity = 105;
-  const initialHideout = 103;
-  const roomExists = number => rooms.some(room => room.number === number);
-  const neighbors = number => [number - 1, number + 1].filter(roomExists);
-  const passage = (a, b) => Math.min(a, b);
-  const exhibits = [
-    ['desk', '机'], ['shelf', '本棚'], ['bed', 'ベッド'], ['closet', 'クローゼット'],
-    ['bin', 'ゴミ箱'], ['shoes', '靴'], ['clock', '時計'], ['window', '窓']
-  ];
-  const unique = {
-    101: { window: '窓枠に夜勤明けのシフト票が挟まっている。', bed: '夜勤用の仮眠記録。足音を聞いた時刻と一致する。' },
-    102: { bin: '裁断された取引書類。三崎は深夜も起きていた。' },
-    103: { desk: '最初の夜の録音。103号室内で、二重に響く足音が途切れている。', closet: '床板の下に古い寝床。最初の夜に獣が103号室に潜んでいた。' },
-    104: { shoes: '配達靴の底に深夜の配達票。野上の在室証言と矛盾する。' },
-    105: { desk: '帳簿に倉橋の筆跡で「獣化したら103の床下へ」とある。変身した住人と最初の潜伏先が分かる。', closet: '古着の内側に獣毛。修繕札には倉橋の名前がある。' },
-    106: { shelf: '久世が修理した受信機の作業記録。最初の録音と照合すると二重の足音を識別できる。' }
+  const order = people.slice(1);
+  const name = id => people.find(person => person.id === id)?.name;
+  const actual = Object.freeze({ you: '占い師', ren: '人狼', mio: '村人', so: '狩人', towa: '記録係', yui: '村人' });
+  const assumed = { ren: '占い師' };
+  const bell = '三つ目の鐘';
+  const locations = { you: '北の礼拝堂', ren: '中庭', mio: '中庭', so: '礼拝堂の戸口', towa: '中庭', yui: '北の礼拝堂' };
+  const vision = { target: 'ren', role: actual.ren, place: locations.you };
+  const forgery = { target: 'you', role: '人狼', place: '西の書斎' };
+  const guard = { target: 'you', event: '外廊下で板がきしんだ。戸口を越える者はいなかった。', seen: null };
+  const ledger = { target: 'ren', place: locations.ren, action: '雨戸を閉めていた' };
+  const sightings = {
+    mio: { target: 'ren', place: locations.ren, action: '雨戸に手をかけていた' },
+    yui: { target: 'you', place: locations.you, action: '火の消えたランタンを持っていた' }
   };
-  const traceTypes = [
-    ['泥の足跡', '泥の爪先が'], ['扉の爪痕', '扉に残った削りくずが'],
-    ['落ちた獣毛', '敷居に絡んだ毛の列が'], ['ずれた家具', '家具の擦過痕が']
+  const rules = [
+    '役職の内訳は村人2人、占い師・狩人・記録係・人狼が各1人。あなたもこの6人に含まれます。',
+    '人狼以外は知っている事実と自分の役職を正直に話します。人狼は真実も嘘も話せます。',
+    '昨夜の三つ目の鐘は一度だけ鳴りました。その瞬間、同じ人物が離れた二つの場所にいることはできません。',
+    '役職の確認は無料です。ほかの質問は全員で8回まで。一度会話を終えた相手には戻れません。'
   ];
+  const common = [
+    ['night', '昨夜は何をしていましたか？'],
+    ['about', '私について何か知っていますか？'],
+    ['suspect', '誰が怪しいと思いますか？']
+  ];
+  const specialties = {
+    村人: [['seen', '昨夜、誰を見ましたか？'], ['where', 'どこで見ましたか？'],
+      ['doing', 'その人は何をしていましたか？'], ['seenMe', '私を見かけましたか？']],
+    占い師: [['divined', '誰を占いましたか？'], ['reading', '占い結果は何でしたか？'],
+      ['divinedMe', '私を占いましたか？'], ['ritual', '占いの状況を詳しく教えてください。']],
+    狩人: [['guarded', '誰を守りましたか？'], ['incident', '護衛中に何か起きましたか？'],
+      ['guardSeen', '誰かを見かけましたか？'], ['guardedMe', '私を守りましたか？']],
+    記録係: [['logged', '誰の行動を記録しましたか？'], ['logWhere', 'その人物はどこにいましたか？'],
+      ['logMe', '私の行動記録はありますか？'], ['compare', '誰かの証言と記録が食い違っていますか？']],
+    人狼: []
+  };
+  const claimQuestion = ['claim', 'あなたの役職は何ですか？'];
+  const position = (person, place) => ({ kind: 'place', person, place, time: bell });
+  const roleFact = (person, role) => ({ kind: 'role', person, role });
+  const say = (text, ...facts) => ({ text, facts });
+  const unknown = () => say('それについては知りません。');
+  const at = (id, place) => say(bell + 'が鳴った時、' + name(id) + 'は' + place + 'にいました。', position(id, place));
 
-  // The NPC receives only its own observations and publicly visible barriers.
-  function chooseMove({ hideout, alert, visits, searches, roomAlert, blocked, visibleCaptures }) {
-    if (alert < 50) return hideout;
-    const risk = room => (visits[room] || 0) * 3 + (searches[room] || 0) * 5
-      + (roomAlert[room] || 0) / 10 + (visibleCaptures.includes(room) ? 100 : 0);
-    const choices = neighbors(hideout).filter(room => passage(room, hideout) !== blocked)
-      .sort((a, b) => risk(a) - risk(b) || a - b);
-    if (!choices.length || (alert < 80 && risk(choices[0]) >= risk(hideout))) return hideout;
-    return choices[0];
+  function answer(id, question, history) {
+    const sight = sightings[id];
+    const divination = id === 'ren' ? forgery : vision;
+    switch (question) {
+      case 'claim': {
+        const role = assumed[id] || actual[id];
+        return say('私は' + role + 'です。', roleFact(id, role));
+      }
+      case 'night':
+        return id === 'ren'
+          ? say(bell + 'が鳴った時は、西の書斎で水盤をのぞいていました。', position(id, forgery.place))
+          : say(bell + 'の時は、' + locations[id] + 'にいました。', position(id, locations[id]));
+      case 'about':
+        if (id === 'ren') return say('今朝、暖炉のそばで目を覚ましたのを見ました。');
+        if (id === 'so') return say('昨夜、あなたのそばにいました。護衛の依頼があったので。');
+        if (sight?.target === 'you') return at('you', sight.place);
+        return unknown();
+      case 'suspect':
+        return say('私の見聞きしたことだけでは、誰が怪しいかは判断できません。');
+      case 'seen':
+        return say(name(sight.target) + 'を見ました。' + bell + 'が鳴った時です。');
+      case 'where':
+        return at(sight.target, sight.place);
+      case 'doing':
+        return say(name(sight.target) + 'が' + sight.action + 'のを見ました。', position(sight.target, sight.place));
+      case 'seenMe':
+        return sight.target === 'you' ? at('you', sight.place) : say('私が覚えている目撃に、あなたは含まれていません。');
+      case 'divined':
+        return say('占ったのは' + name(divination.target) + 'です。');
+      case 'reading':
+        return say('水盤に映った役職は、' + name(divination.target) + 'が' + divination.role + '。', roleFact(divination.target, divination.role));
+      case 'divinedMe':
+        return say(divination.target === 'you' ? 'ええ。昨夜はあなたを占いました。' : 'いいえ。昨夜は別の人を占いました。');
+      case 'ritual':
+        return say(bell + 'が鳴った瞬間に、' + divination.place + 'で水盤をのぞきました。', position(id, divination.place));
+      case 'guarded':
+        return say('護衛したのは' + name(guard.target) + 'です。');
+      case 'incident':
+        return say(guard.event);
+      case 'guardSeen':
+        return guard.seen ? say(guard.seen) : say('顔を確認できた人はいません。');
+      case 'guardedMe':
+        return say('はい。昨夜、あなたを護衛しました。');
+      case 'logged':
+        return say('帳面に記したのは' + name(ledger.target) + 'です。' + bell + 'の時に' + ledger.action + '。');
+      case 'logWhere':
+        return at(ledger.target, ledger.place);
+      case 'logMe':
+        return say('昨夜の帳面に、あなたの行動は記されていません。');
+      case 'compare': {
+        const differs = history.some(entry => entry.facts.some(fact => fact.kind === 'place' &&
+          fact.person === ledger.target && fact.time === bell && fact.place !== ledger.place));
+        const entry = at(ledger.target, ledger.place);
+        return differs ? say('今聞かせてもらった話とは食い違います。' + entry.text, ...entry.facts) : entry;
+      }
+      default:
+        return unknown();
+    }
+  }
+
+  function enumerate(ids, remaining, layout = {}) {
+    if (!ids.length) return [layout];
+    return [...new Set(remaining)].flatMap(role => {
+      const rest = [...remaining];
+      rest.splice(rest.indexOf(role), 1);
+      return enumerate(ids.slice(1), rest, { ...layout, [ids[0]]: role });
+    });
+  }
+  const layouts = enumerate(people.map(person => person.id), seats);
+
+  function infer(entries) {
+    return layouts.filter(layout => {
+      const positions = new Map();
+      for (const entry of entries) {
+        if (layout[entry.speaker] === '人狼') continue;
+        for (const fact of entry.facts) {
+          if (fact.kind === 'role' && layout[fact.person] !== fact.role) return false;
+          if (fact.kind === 'place') {
+            const key = fact.time + ':' + fact.person;
+            if (positions.has(key) && positions.get(key) !== fact.place) return false;
+            positions.set(key, fact.place);
+          }
+        }
+      }
+      return true;
+    }).map(layout => ({ ...layout }));
   }
 
   function createGame() {
-    let day = 1;
-    let points = 5;
-    let phase = 'investigation';
-    let current = null;
-    let hideout = initialHideout;
-    let alert = 0;
+    let index = 0;
+    let remaining = 8;
+    let phase = 'conversation';
     let result = null;
-    let entered = new Set();
-    let mornings = [];
-    const visits = {};
-    const searches = {};
-    const roomAlert = {};
-    const observed = {};
-    const explored = {};
-    const notebook = [];
-    const traces = [];
-    const hypotheses = {};
-    const facts = new Set();
-    const traps = { capture: [], block: null, monitor: null };
+    const transcript = [];
+    const claims = {};
+    const notes = {};
 
-    function record(category, room, text, key) {
-      notebook.push({ day, category, room, text, key });
-      return text;
-    }
-
-    function spend(amount) {
-      if (phase !== 'investigation' || points < amount || !current) return false;
-      points -= amount;
-      return true;
-    }
-
-    function raise(amount) {
-      if (current !== hideout) return;
-      alert = Math.min(100, alert + amount);
-      roomAlert[current] = Math.min(100, (roomAlert[current] || 0) + amount);
-    }
-
-    function investigate(key, cost, action) {
-      const id = day + ':' + current + ':' + key;
-      if (explored[id] || !spend(cost)) return null;
-      const message = action();
-      explored[id] = true;
-      return message;
-    }
-
-    function reviewStatements() {
-      return rooms.filter(room => notebook.some(entry => entry.category === '住人の証言' && entry.room === room.number))
-        .map(({ number }) => {
-          const [, , fact, , honest] = residents[number - 101];
-          return { number, fact, honest };
-        });
-    }
-
-    function move(nextDay, blocked = null, visibleCaptures = []) {
-      const from = hideout;
-      hideout = chooseMove({ hideout, alert, visits, searches, roomAlert, blocked, visibleCaptures });
-      if (from === hideout) return null;
-      const index = traces.length % traceTypes.length;
-      const [label] = traceTypes[index];
-      const trace = { id: traces.length, night: day, available: nextDay, from, to: hideout, label, index };
-      traces.push(trace);
-      return trace;
+    function available() {
+      if (phase !== 'conversation') return [];
+      const id = order[index].id;
+      if (!claims[id]) return [claimQuestion];
+      const asked = new Set(transcript.filter(entry => entry.speaker === id).map(entry => entry.id));
+      return [...common, ...specialties[claims[id]]].filter(([question]) => !asked.has(question));
     }
 
     return {
       view() {
+        const possible = infer(transcript);
+        const candidates = Object.fromEntries(people.map(({ id }) =>
+          [id, roles.filter(role => possible.some(layout => layout[id] === role))]));
         return JSON.parse(JSON.stringify({
-          day, points, phase, current, rooms, entered: [...entered], observed, explored, notebook,
-          hypotheses, mornings, traps, result, hasAudio: facts.has('audio'),
-          traces: traces.filter(trace => trace.available <= day).map(({ id, night, from, label }) => ({ id, night, from, label }))
+          phase, index, current: phase === 'conversation' ? order[index] : null, rules, people, roles,
+          remaining, claims, notes, transcript, candidates, layouts: possible.length, result,
+          questions: available().map(([id, text]) => ({ id, text, cost: Number(id !== 'claim') }))
         }));
       },
-      enter(room) {
-        if (phase !== 'investigation' || !roomExists(room)) return false;
-        if (!entered.has(room)) {
-          if (points < 1) return false;
-          points--;
-          entered.add(room);
-          visits[room] = (visits[room] || 0) + 1;
-          current = room;
-          raise(10);
-          observed[room] = day;
-        }
-        current = room;
+      ask(question) {
+        const option = available().find(([id]) => id === question);
+        if (!option || (question !== 'claim' && remaining === 0)) return false;
+        const speaker = order[index].id;
+        const reply = answer(speaker, question, transcript);
+        if (question === 'claim') claims[speaker] = reply.facts[0].role;
+        else remaining--;
+        transcript.push({ speaker, id: question, question: option[1], ...reply });
         return true;
       },
-      leave() { current = null; },
-      observe(item) {
-        if (phase !== 'investigation' || !current || !exhibits.some(([key]) => key === item)) return null;
-        const hints = {
-          desk: '天板には埃。引き出しは閉まっている。', shelf: '背表紙が少しずれている。',
-          bed: '掛け布団は整えてある。', closet: '扉に取っ手がある。中はここから見えない。',
-          bin: '紙くずが入っている。', shoes: '玄関に靴が揃えてある。',
-          clock: '秒針が廊下の音に重なる。', window: 'ガラスが外気で曇っている。'
-        };
-        return hints[item];
-      },
-      search(item) {
-        if (!exhibits.some(([key]) => key === item)) return null;
-        return investigate(item, 1, () => {
-          searches[current] = (searches[current] || 0) + 1;
-          raise(20);
-          const clue = unique[current]?.[item];
-          if (clue) {
-            if (current === 103 && item === 'desk') facts.add('audio');
-            if ((current === 103 && ['desk', 'closet'].includes(item)) || (current === 105 && item === 'desk')) raise(20);
-          }
-          return record(clue ? '物的証拠' : '調査記録', current, clue || '詳しく確認したが、事件に結びつく痕跡は見つからない。', item);
-        });
-      },
-      question() {
-        return investigate('question', 1, () => {
-          raise(15);
-          const witness = traces.findLast(trace => trace.available === day && neighbors(current).includes(trace.from));
-          const [, , , statement] = residents[current - 101];
-          record('住人の証言', current, statement, 'question');
-          if (witness) return record('目撃情報', current, '昨夜、' + witness.from + '号室の扉の前から足音がした。誰だったかまでは分からない。');
-          return statement;
-        });
-      },
-      examineTrace(id) {
-        const trace = traces.find(entry => entry.id === id && entry.from === current && entry.available <= day);
-        if (!trace || notebook.some(entry => entry.key === 'trace-' + id)) return null;
-        return investigate('trace-' + id, 1, () => {
-          searches[current] = (searches[current] || 0) + 1;
-          raise(20);
-          raise(20);
-          return record('逃走痕・確定', current, trace.night + '日目の夜、' + trace.from + '号室から ' + trace.to +
-            '号室へ。' + traceTypes[trace.index][1] + 'その方向に続いている。', 'trace-' + id);
-        });
-      },
-      verify() {
-        if (current !== 106 || !facts.has('audio')) return null;
-        return investigate('verify', 2, () => {
-          raise(20);
-          raise(20);
-          return record('検証・確定', current, '音源照合の結果、' + day + '日目の昼の潜伏先は ' + hideout + '号室。', 'verify');
-        });
-      },
-      note(room, text) {
-        if (!roomExists(room) || typeof text !== 'string' || phase === 'ended') return false;
-        hypotheses[room] = text.slice(0, 300);
+      next() {
+        if (phase !== 'conversation' || !claims[order[index].id]) return false;
+        index++;
+        if (index === order.length) phase = 'verdict';
         return true;
       },
-      endDay() {
-        if (phase !== 'investigation') return false;
-        current = null;
-        if (day === 5) {
-          phase = 'placement';
-          return true;
-        }
-        const trace = move(day + 1);
-        day++;
-        points = 5;
-        entered = new Set();
-        alert = trace ? 0 : Math.max(0, alert - 15);
-        mornings = trace ? [trace.from] : [];
-        if (trace) record('夜間の変化', trace.from, trace.night + '日目の夜、' + trace.from + '号室の入口に「' +
-          trace.label + '」。逃走元は判明。行き先は現地で詳しく調べられる。');
-        else record('夜間の変化', null, '昨夜、逃走痕の新たな発生はなかった。');
+      note(id, role) {
+        if (phase === 'result' || !people.some(person => person.id === id) || (role !== '' && !roles.includes(role))) return false;
+        notes[id] = role;
         return true;
       },
-      place(type, target) {
-        if (phase !== 'placement') return false;
-        if (type === 'capture' && roomExists(target)) {
-          const index = traps.capture.indexOf(target);
-          if (index >= 0) traps.capture.splice(index, 1);
-          else if (traps.capture.length < 2) traps.capture.push(target);
-          else return false;
-          return true;
-        }
-        if ((type !== 'block' && type !== 'monitor') || !roomExists(target) || target === 106) return false;
-        const other = type === 'block' ? 'monitor' : 'block';
-        if (target === traps[other]) return false;
-        traps[type] = traps[type] === target ? null : target;
-        return true;
-      },
-      execute() {
-        if (phase !== 'placement') return false;
-        const start = hideout;
-        // A loop in a room visited repeatedly by the player is conspicuous to a wolf hiding there.
-        const visible = traps.capture.filter(room => room === start && (visits[room] || 0) >= 2);
-        const approachAlert = Math.min(100, alert + 35 + (visible.length ? 25 : 0));
-        alert = approachAlert;
-        const trace = move(day, traps.block, visible);
-        if (trace) record('逃走痕・確定', trace.from, '作戦中、' + trace.from + '号室から ' + trace.to + '号室へ。' + trace.label + 'を確認。');
-        const caught = traps.capture.includes(hideout);
+      submit(self, guesses = {}) {
+        if (phase !== 'verdict' || !roles.includes(self)) return false;
+        const optional = order.filter(person => roles.includes(guesses[person.id]));
+        const lies = [
+          { questions: '役職確認', text: '蓮は占い師を名乗った。実際には人狼。', ids: ['claim'] },
+          { questions: '昨夜の行動・占いの状況', text: '西の書斎にいたと話したが、三つ目の鐘の時は中庭にいた。', ids: ['night', 'ritual'] },
+          { questions: '占いの対象・結果', text: 'あなたを占い、人狼と出たと話したが、蓮は誰も占っていない。', ids: ['divined', 'reading', 'divinedMe'] }
+        ].map(lie => ({ ...lie, heard: transcript.some(entry => entry.speaker === 'ren' && lie.ids.includes(entry.id)) }));
         result = {
-          caught, identity, start, end: hideout, moved: Boolean(trace), statements: reviewStatements(),
-          monitored: traps.monitor === null ? null : Boolean(trace && passage(trace.from, trace.to) === traps.monitor),
-          reason: caught ? '潜伏先に仕掛けた捕獲罠が作動した。' :
-            traps.capture.length ? '人狼は捕獲罠に接触せず、作戦時間が終了した。' : '捕獲罠が用意されないまま、作戦時間が終了した。'
+          won: self === actual.you, self, roles: actual, lies,
+          answered: optional.length, score: optional.filter(person => guesses[person.id] === actual[person.id]).length,
+          events: '三つ目の鐘が鳴った時、あなたは北の礼拝堂、蓮は中庭にいた。護衛中の奏は外廊下の物音を聞いた。今朝、蓮は暖炉のそばであなたが目を覚ますのを見た。',
+          knowledge: {
+            you: '北の礼拝堂で蓮を占い、人狼と出た。目覚めた時にはその記憶も失っていた。',
+            ren: '自分が人狼で、鐘の時は中庭で雨戸を閉めていた。今朝あなたが目覚めるところを見た。',
+            mio: '鐘の時に中庭で蓮を見た。雨戸に手をかけていた。',
+            so: 'あなたを護衛していた。外廊下で板がきしんだが、誰の顔も確認できなかった。',
+            towa: '鐘の時に蓮が中庭で雨戸を閉めたことを帳面に記録した。',
+            yui: '鐘の時に北の礼拝堂であなたを見た。火の消えたランタンを持っていた。'
+          },
+          explanation: [
+            '蓮には「占いの状況」または「昨夜の行動」を聞く。蓮は三つ目の鐘の時に西の書斎にいたと言う。',
+            '澪には「どこで見ましたか？」、十和には「その人物はどこにいましたか？」を聞く。二人とも同じ鐘の時に蓮が中庭にいたと答える。',
+            '蓮が正直なら、澪と十和の両方が嘘をついたことになる。人狼は一人なので、蓮が人狼。',
+            '残るNPCの申告は村人2人、狩人1人、記録係1人。公開された内訳で空いているのは占い師だけ。'
+          ]
         };
-        phase = 'ended';
-        return true;
-      },
-      expire() {
-        if (phase !== 'placement') return false;
-        result = {
-          caught: false, identity, start: hideout, end: hideout, moved: false,
-          monitored: null, reason: '期限までに捕獲作戦を実行しなかった。',
-          statements: reviewStatements()
-        };
-        phase = 'ended';
+        phase = 'result';
         return true;
       }
     };
   }
 
-  const api = { createGame, chooseMove, exhibits, neighbors };
+  const api = { createGame, infer };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else globalThis.Mansion = api;
 })();

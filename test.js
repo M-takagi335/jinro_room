@@ -1,209 +1,149 @@
 'use strict';
 const assert = require('node:assert/strict');
-const { createGame, chooseMove, neighbors, exhibits } = require('./game.js');
+const { readFileSync } = require('node:fs');
+const { join } = require('node:path');
+const vm = require('node:vm');
+const { createGame, infer } = require('./game.js');
 
-function finishDays(game) {
-  while (game.view().phase === 'investigation') assert.ok(game.endDay());
-  assert.equal(game.view().day, 5);
-}
+const expected = { you: '占い師', ren: '人狼', mio: '村人', so: '狩人', towa: '記録係', yui: '村人' };
+const opening = createGame().view();
+assert.equal(opening.phase, 'conversation');
+assert.equal(opening.remaining, 8);
+assert.equal(opening.layouts, 360);
+assert.equal(opening.result, null);
+assert.deepEqual(opening.candidates.you, opening.roles);
+assert.deepEqual(Object.keys(opening.current), ['id', 'name', 'description']);
+assert.deepEqual(opening.questions.map(q => [q.id, q.cost]), [['claim', 0]]);
+assert.deepEqual(opening.claims, {});
 
-function roomFrom(text) {
-  return Number(text.match(/(10[1-6])号室[。へ]/g).at(-1).slice(0, 3));
-}
-
-function secure(game, room) {
-  const adjacent = neighbors(room);
-  assert.ok(game.place('capture', room));
-  assert.ok(game.place('capture', adjacent[0]));
-  if (adjacent.length === 2) assert.ok(game.place('block', room));
-  assert.ok(game.place('monitor', Math.min(room, adjacent[0])));
-  assert.ok(game.execute());
-  const { result } = game.view();
-  assert.equal(result.start, room);
-  assert.ok(result.caught);
-  assert.equal(result.identity, 105);
-  assert.ok([room, adjacent[0]].includes(result.end));
-  assert.equal(result.monitored, result.moved);
-  assert.ok(!game.execute());
-  assert.ok(!game.place('capture', room));
-  assert.ok(!game.endDay());
-  assert.ok(!game.enter(room));
-  assert.ok(!game.expire());
-  if (result.moved) {
-    assert.ok(game.view().traces.some(trace => trace.from === room && trace.night === 5));
+function runRoute(useQuestions, notes = null) {
+  const game = createGame();
+  for (const id of ['ren', 'mio', 'so', 'towa', 'yui']) {
+    assert.equal(game.view().current.id, id);
+    assert.ok(!game.next());
+    assert.ok(!game.ask('ritual'));
+    assert.ok(game.ask('claim'));
+    assert.ok(!game.ask('claim'));
+    if (notes) assert.ok(game.note(id, notes));
+    for (const question of useQuestions[id] || []) {
+      assert.ok(game.ask(question));
+      assert.ok(!game.ask(question));
+    }
+    assert.ok(game.next());
   }
-  return result;
+  return game;
 }
 
-const game = createGame();
-assert.deepEqual(game.view().rooms.map(room => room.number), [101, 102, 103, 104, 105, 106]);
-for (const room of [101, 102, 103, 104, 105]) assert.ok(game.enter(room));
-assert.equal(game.view().points, 0);
-assert.ok(!game.enter(106));
-assert.ok(game.enter(102));
-for (const [key] of exhibits) assert.ok(game.observe(key));
-assert.equal(game.view().notebook.length, 0);
-assert.equal(game.search('desk'), null);
-assert.equal(game.question(), null);
-assert.ok(game.note(102, '仮説'));
-assert.ok(game.endDay());
-assert.equal(game.view().points, 5);
-assert.ok(game.enter(106));
-assert.equal(game.view().points, 4);
-assert.equal(game.verify(), null);
-assert.ok(game.question());
-assert.equal(game.question(), null);
-assert.equal(game.view().points, 3);
-assert.equal(game.view().hypotheses[102], '仮説');
-assert.equal(game.view().notebook.find(entry => entry.category === '住人の証言').day, 2);
-assert.equal(game.view().result, null);
-for (const hidden of ['hideout', 'identity', 'alert', 'roomAlert']) assert.ok(!(hidden in game.view()));
-finishDays(game);
-assert.ok(game.expire());
-assert.equal(game.view().result.caught, false);
-assert.match(game.view().result.reason, /期限/);
-assert.equal(game.view().result.statements[0].honest, true);
+const claimsOnly = runRoute({});
+assert.equal(claimsOnly.view().remaining, 8);
+assert.equal(claimsOnly.view().layouts, 6);
+assert.deepEqual(claimsOnly.view().candidates.you, opening.roles);
+assert.equal(claimsOnly.view().claims.ren, '占い師');
+assert.equal(claimsOnly.view().result, null);
+assert.ok(!claimsOnly.next());
+assert.ok(!claimsOnly.ask('claim'));
+assert.ok(!claimsOnly.submit(''));
+assert.ok(claimsOnly.submit('狩人', { ren: '人狼', mio: '狩人' }));
+assert.equal(claimsOnly.view().result.won, false);
+assert.equal(claimsOnly.view().result.score, 1);
+assert.equal(claimsOnly.view().result.answered, 2);
+assert.ok(!claimsOnly.submit('占い師'));
+assert.ok(!claimsOnly.note('ren', '占い師'));
 
-const context = { hideout: 103, visits: {}, searches: {}, roomAlert: {}, blocked: null, visibleCaptures: [] };
-const movement = (alert, changes = {}) => chooseMove({ ...context, ...changes, alert });
-assert.equal(movement(49), 103);
-assert.equal(movement(50), 103);
-assert.equal(movement(50, { visits: { 103: 1 } }), 102);
-assert.equal(movement(79, { visits: { 102: 3, 104: 2 } }), 103);
-assert.equal(movement(80, { visits: { 102: 3, 104: 2 } }), 104);
-assert.equal(movement(80, { hideout: 101, blocked: 101 }), 101);
-assert.equal(movement(80, { blocked: 102 }), 104);
-assert.equal(movement(80, { visibleCaptures: [102] }), 104);
-assert.equal(movement(80, { searches: { 102: 1 } }), 104);
-assert.equal(movement(80, { roomAlert: { 102: 30 } }), 104);
-assert.equal(movement(80, { notebook: ['private'], hypotheses: { 104: 'private' } }), 102);
+const route = { ren: ['ritual'], mio: ['where'], towa: ['logWhere'] };
+const solved = runRoute(route);
+const evidence = solved.view().transcript;
+assert.deepEqual(evidence.map(e => e.speaker), ['ren', 'ren', 'mio', 'mio', 'so', 'towa', 'towa', 'yui']);
+assert.equal(solved.view().remaining, 5);
+assert.deepEqual(infer(evidence), [expected]);
+assert.deepEqual(solved.view().candidates.you, ['占い師']);
+assert.deepEqual(runRoute(route, '人狼').view().transcript, evidence);
 
-const quiet = createGame();
-assert.ok(quiet.enter(103));
-assert.ok(quiet.question());
-assert.ok(quiet.search('clock')); // 10 + 15 + 20 = 45
-assert.ok(quiet.endDay());
-assert.deepEqual(quiet.view().traces, []);
-
-const trail = createGame();
-assert.ok(trail.enter(103));
-assert.ok(trail.search('desk')); // 10 + 20 + 20 = 50
-assert.ok(trail.endDay());
-const [trace] = trail.view().traces;
-assert.equal(trace.from, 103);
-assert.equal(trace.night, 1);
-assert.equal(trace.to, undefined);
-assert.deepEqual(trail.view().mornings, [103]);
-assert.equal(trail.examineTrace(trace.id), null);
-assert.ok(trail.enter(102));
-assert.ok(trail.question());
-assert.ok(trail.view().notebook.some(entry => entry.category === '目撃情報'));
-assert.ok(trail.endDay());
-assert.ok(trail.enter(103));
-const clue = trail.examineTrace(trace.id);
-assert.equal(roomFrom(clue), 102);
-assert.equal(trail.examineTrace(trace.id), null);
-assert.ok(trail.view().notebook.some(entry => entry.day === 3 && entry.key === 'trace-0'));
-finishDays(trail);
-assert.ok(!secure(trail, roomFrom(clue)).moved);
-
-const operation = createGame();
-for (let day = 1; day <= 4; day++) assert.ok(operation.endDay());
-assert.ok(operation.enter(103));
-assert.ok(operation.search('desk'));
-assert.ok(operation.search('closet'));
-assert.ok(operation.endDay());
-assert.ok(operation.place('capture', 103));
-assert.ok(operation.place('capture', 104));
-assert.ok(!operation.place('capture', 102));
-assert.ok(operation.place('block', 102));
-assert.ok(!operation.place('monitor', 102));
-assert.ok(operation.place('monitor', 103));
-assert.ok(!operation.place('block', 106));
-assert.ok(operation.execute());
-assert.deepEqual(
-  [operation.view().result.caught, operation.view().result.start, operation.view().result.end, operation.view().result.monitored],
-  [true, 103, 104, true]
-);
-
-const failure = createGame();
-finishDays(failure);
-assert.ok(failure.place('capture', 106));
-assert.ok(failure.execute());
-assert.equal(failure.view().result.caught, false);
-const retry = createGame();
-assert.deepEqual([retry.view().day, retry.view().points, retry.view().phase, retry.view().notebook.length], [1, 5, 'investigation', 0]);
-
-let routeWins = 0;
-let movements = 0;
-const traceLabels = new Set();
-for (let seed = 1; seed <= 800; seed++) {
-  let stream = seed;
-  const random = max => {
-    stream = (Math.imul(stream, 1664525) + 1013904223) >>> 0;
-    return Math.floor(stream / 2 ** 32 * max);
-  };
-  const match = createGame();
-  for (let day = 1; day < 5; day++) {
-    let { traces } = match.view();
-    const seen = traces.length;
-    assert.equal(match.view().points, 5);
-    const focus = 101 + random(6);
-    for (let step = 0; step < 8; step++) {
-      if (random(4) === 0 || !match.view().current) match.enter(step === 0 ? focus : 101 + random(6));
-      else if (random(4) === 0) match.question();
-      else match.search(exhibits[random(exhibits.length)][0]);
-      assert.ok(match.view().points >= 0);
-    }
-    assert.ok(match.endDay());
-    ({ traces } = match.view());
-    assert.ok(traces.length === seen || traces.length === seen + 1);
-    if (traces.length > seen) {
-      const latest = traces.at(-1);
-      assert.equal(latest.night, day);
-      assert.deepEqual(match.view().mornings, [latest.from]);
-      assert.ok(match.view().notebook.some(entry => entry.category === '夜間の変化' && entry.day === day + 1 && entry.room === latest.from));
-      traceLabels.add(latest.label);
-      movements++;
-    }
-  }
-  const variant = seed % 2;
-  let hideout;
-  if (variant === 0) {
-    // Independent acoustic route remains affordable after any of the first four days.
-    if (!match.view().hasAudio) {
-      assert.ok(match.enter(103));
-      assert.ok(match.search('desk'));
-    }
-    assert.ok(match.enter(106));
-    hideout = roomFrom(match.verify());
-  } else {
-    const traces = match.view().traces;
-    const latest = traces.at(-1);
-    if (latest) {
-      assert.ok(match.enter(latest.from));
-      hideout = roomFrom(match.examineTrace(latest.id));
-      assert.ok(neighbors(latest.from).includes(hideout));
-    } else {
-      assert.ok(match.enter(103));
-      assert.ok(match.search('closet'));
-      hideout = 103;
-    }
-  }
-  assert.ok(match.endDay());
-  secure(match, hideout);
-  routeWins++;
+// Independently enumerate placements and apply only public constraints.
+const alternatives = infer([]);
+assert.equal(new Set(alternatives.map(layout => JSON.stringify(layout))).size, 360);
+const independent = alternatives.filter(layout => {
+  const claims = solved.view().claims;
+  if (Object.entries(claims).some(([id, role]) => layout[id] !== '人狼' && layout[id] !== role)) return false;
+  return layout.ren === '人狼' || (layout.mio === '人狼' && layout.towa === '人狼');
+});
+assert.deepEqual(independent, [expected]);
+for (const id of ['ritual', 'where', 'logWhere']) {
+  assert.ok(new Set(infer(evidence.filter(e => e.id !== id)).map(layout => layout.you)).size > 1);
 }
-assert.ok(movements > 0);
-assert.ok(traceLabels.size >= 2);
+assert.deepEqual(runRoute({ ren: ['night'], mio: ['doing'], towa: ['compare'] }).view().candidates.you, ['占い師']);
+assert.ok(solved.submit('占い師', expected));
+const answer = solved.view().result;
+assert.equal(answer.won, true);
+assert.equal(answer.score, 5);
+assert.deepEqual(answer.roles, expected);
+assert.equal(answer.lies.filter(lie => lie.heard).length, 2);
+assert.match(answer.knowledge.you, /蓮を占い、人狼/);
+assert.match(answer.explanation.at(-1), /占い師/);
 
-const relentless = createGame();
-for (const room of [103, 102, 101, 102]) {
-  assert.ok(relentless.enter(room));
-  for (const item of ['clock', 'shoes', 'window']) assert.ok(relentless.search(item));
-  assert.ok(relentless.question()); // 85 alert forces an adjacent move.
-  assert.ok(relentless.endDay());
-  assert.equal(relentless.view().traces.at(-1).from, room);
+const wolf = createGame();
+assert.ok(wolf.ask('claim'));
+assert.ok(wolf.view().questions.some(q => q.id === 'divined'));
+for (const question of ['night', 'about', 'suspect', 'divined', 'reading', 'divinedMe', 'ritual']) assert.ok(wolf.ask(question));
+assert.equal(wolf.view().remaining, 1);
+assert.match(wolf.view().transcript.find(e => e.id === 'reading').text, /あなたが人狼/);
+assert.match(wolf.view().transcript.find(e => e.id === 'about').text, /暖炉/);
+assert.ok(wolf.next());
+assert.ok(wolf.ask('claim'));
+assert.ok(!wolf.view().questions.some(q => q.id === 'reading'));
+assert.ok(wolf.view().questions.some(q => q.id === 'seen'));
+assert.ok(wolf.ask('about'));
+assert.match(wolf.view().transcript.at(-1).text, /知りません/);
+assert.equal(wolf.view().remaining, 0);
+assert.ok(!wolf.ask('where'));
+assert.ok(wolf.next());
+assert.ok(wolf.ask('claim'));
+assert.ok(wolf.view().questions.some(q => q.id === 'guarded'));
+assert.ok(wolf.next());
+assert.ok(wolf.ask('claim'));
+assert.ok(wolf.view().questions.some(q => q.id === 'logged'));
+
+for (const [id, place, subject] of [['mio', '中庭', 'ren'], ['yui', '北の礼拝堂', 'you'], ['towa', '中庭', 'ren']]) {
+  const questions = id === 'towa' ? ['night', 'about', 'suspect', 'logged', 'logWhere', 'logMe', 'compare'] :
+    ['night', 'about', 'suspect', 'seen', 'where', 'doing', 'seenMe'];
+  const review = runRoute({ [id]: questions }).view();
+  const entries = review.transcript.filter(e => e.speaker === id && e.id !== 'claim');
+  assert.ok(entries.some(e => e.facts.some(f => f.person === subject && f.place === place)));
+  assert.ok(entries.every(e => e.facts.every(f => f.kind !== 'role')));
+  assert.ok(infer(review.transcript).some(layout => JSON.stringify(layout) === JSON.stringify(expected)));
 }
-assert.equal(new Set(relentless.view().traces.map(trace => trace.label)).size, 4);
-console.log(`Core scenarios passed; ${routeWins} seeded investigations won using two evidence routes (${movements} overnight trace events).`);
+const guard = runRoute({ so: ['guarded', 'incident', 'guardSeen', 'guardedMe'] }).view().transcript;
+assert.match(guard.find(e => e.id === 'guarded').text, /あなた/);
+assert.match(guard.find(e => e.id === 'guardSeen').text, /確認できた人はいません/);
+assert.deepEqual(createGame().view(), opening);
+
+// Exercise the standalone UI event wiring without opening or previewing HTML.
+const html = readFileSync(join(__dirname, 'standalone.html'), 'utf8');
+const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
+const handlers = {};
+const stub = { focus() {} };
+const app = { innerHTML: '', querySelector: () => stub, addEventListener(event, fn) { handlers[event] = fn; } };
+vm.runInNewContext(script, { document: { querySelector: () => app } });
+function click(act, value = '') {
+  assert.ok(app.innerHTML.includes('data-act="' + act + '" data-value="' + value + '"'));
+  handlers.click({ target: { closest: () => ({ dataset: { act, value } }) } });
+}
+click('intro');
+click('start');
+for (const id of ['ren', 'mio', 'so', 'towa', 'yui']) {
+  click('ask', 'claim');
+  for (const question of route[id] || []) click('ask', question);
+  click('next');
+}
+click('note');
+assert.match(app.innerHTML, /役職候補 · 占い師/);
+click('note');
+handlers.submit({ preventDefault() {}, target: {
+  id: 'verdict', querySelectorAll: () => [{ dataset: { id: 'you' }, value: '占い師' }]
+} });
+assert.match(app.innerHTML, /正解 · 記憶/);
+click('explanation');
+assert.match(app.innerHTML, /事件の解説/);
+click('retry');
+assert.match(app.innerHTML, /1 \/ 5人目/);
+console.log('Passed: 360 alternative layouts, unique 3-question solution, NPC knowledge and budget, verdicts, retry, standalone UI wiring.');

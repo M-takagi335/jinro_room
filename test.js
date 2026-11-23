@@ -1,131 +1,209 @@
 'use strict';
 const assert = require('node:assert/strict');
-const { createGame, infer, truth, adjacent, canSolve } = require('./game.js');
+const { createGame, chooseMove, neighbors, exhibits } = require('./game.js');
 
-const layouts = infer([]);
-assert.equal(layouts.length, 15);
-assert.equal(new Set(layouts.map(pair => pair.join(','))).size, 15);
-const speech = new Set();
-const outcomes = new Set();
-let matches = 0;
-
-for (const [index, wolves] of layouts.entries()) {
-  for (let seed = 1; seed <= 80; seed++) {
-    let stream = seed;
-    function random() {
-      stream = (Math.imul(stream, 1664525) + 1013904223) >>> 0;
-      return stream / 2 ** 32;
-    }
-    let first = true;
-    const game = createGame(() => {
-      if (!first) return random();
-      first = false;
-      return (index + 0.5) / layouts.length;
-    });
-    assert.deepEqual([game.view().wolves, game.view().villagers], [2, 4]);
-    let turns = 0;
-    while (game.view().phase === 'day') {
-      const start = game.view();
-      assert.ok(++turns <= 3);
-      assert.equal(start.remaining, 2);
-      assert.ok(canSolve(start.candidates, start.alive, 2));
-      assert.equal(start.events.filter(e => e.kind === 'testimony' && e.day === start.day).length, start.alive.length);
-      assert.ok(!game.advanceNight());
-      const inspected = [];
-      let target;
-      if (seed % 2 === 0) {
-        // Choose a room using public information only.
-        while (true) {
-          const state = game.view();
-          target = state.alive.find(room => state.candidates.every(pair => pair.includes(room)));
-          if (target) break;
-          assert.ok(state.remaining);
-          const probe = state.alive.find(room => {
-            if (inspected.includes(room)) return false;
-            const groups = Map.groupBy(state.candidates, pair =>
-              adjacent(room).filter(other => state.alive.includes(other) && pair.includes(other)).length);
-            return groups.size > 1 && [...groups.values()].every(group =>
-              canSolve(group, state.alive, state.remaining - 1, [...inspected, room]));
-          });
-          assert.ok(probe);
-          assert.ok(game.investigate(probe));
-          assert.ok(!game.investigate(probe));
-          inspected.push(probe);
-        }
-      } else {
-        for (const room of start.alive.slice(0, 2)) assert.ok(game.investigate(room));
-        assert.ok(!game.investigate(start.alive[2]));
-        target = start.alive[Math.floor(random() * start.alive.length)];
-      }
-      assert.ok(!game.seal(99));
-      assert.ok(game.seal(target));
-      const sealed = game.view();
-      assert.ok(!game.seal(target));
-      assert.ok(!game.investigate(target));
-      assert.equal(sealed.villagers, start.villagers - Number(!wolves.includes(target)));
-      assert.equal(sealed.wolves, start.wolves - Number(wolves.includes(target)));
-      if (sealed.phase === 'night') {
-        assert.ok(!game.seal(sealed.alive[0]));
-        assert.ok(game.advanceNight());
-        const next = game.view();
-        const attacks = next.events.slice(sealed.events.length).filter(e => e.cause === 'attacked');
-        assert.equal(attacks.length, 1);
-        assert.ok(sealed.alive.includes(attacks[0].room) && !wolves.includes(attacks[0].room));
-        assert.equal(next.villagers, sealed.villagers - 1);
-        assert.equal(next.wolves, sealed.wolves);
-        assert.ok(!game.advanceNight());
-      }
-    }
-
-    const end = game.view();
-    outcomes.add(end.phase);
-    if (seed % 2 === 0) assert.equal(end.phase, 'won');
-    if (end.phase === 'won') assert.equal(end.wolves, 0);
-    else assert.ok(end.wolves > 0 && end.villagers <= end.wolves);
-    assert.equal(end.events.filter(e => e.kind === 'reveal').length, 6);
-    for (const event of end.events) {
-      if (event.kind === 'reveal') {
-        assert.equal(event.role, wolves.includes(event.room) ? '人狼' : '村人');
-      }
-      if (event.kind === 'investigation') {
-        const expected = adjacent(event.room).filter(room => wolves.includes(room) && event.alive.includes(room)).length;
-        assert.equal(event.claim.value, expected);
-      }
-      if (event.kind === 'testimony') {
-        assert.ok(event.alive.includes(event.speaker));
-        if (event.claim.kind === 'count') {
-          assert.ok(event.claim.value <= Math.min(2, event.claim.targets.length));
-        }
-        const isTrue = truth(event.claim, wolves, event.alive);
-        if (wolves.includes(event.speaker)) speech.add(isTrue);
-        else assert.ok(isTrue);
-      }
-    }
-    for (let n = 0; n <= end.events.length; n++) {
-      assert.ok(infer(end.events.slice(0, n)).some(pair => pair.join() === wolves.join()));
-    }
-    for (const room of [1, 2, 3, 4, 5, 6]) {
-      assert.ok(!game.investigate(room));
-      assert.ok(!game.seal(room));
-    }
-    assert.ok(!game.advanceNight());
-    assert.deepEqual(game.view(), end);
-    matches++;
-  }
+function finishDays(game) {
+  while (game.view().phase === 'investigation') assert.ok(game.endDay());
+  assert.equal(game.view().day, 5);
 }
 
-assert.deepEqual(speech, new Set([true, false]));
-assert.deepEqual(outcomes, new Set(['won', 'lost']));
-const previous = createGame(() => 0);
-assert.ok(previous.seal(1));
-assert.ok(previous.advanceNight());
-assert.ok(previous.seal(2));
-assert.equal(previous.view().phase, 'won');
-const retry = createGame(() => 0.999).view();
-assert.equal(retry.day, 1);
-assert.equal(retry.phase, 'day');
-assert.deepEqual([retry.villagers, retry.wolves, retry.remaining], [4, 2, 2]);
-assert.ok(retry.events.every(event => event.kind === 'testimony'));
-assert.ok(retry.candidates.some(pair => pair.join() === '5,6'));
-assert.notDeepEqual(retry.candidates, previous.view().candidates);
-console.log(`${matches} matches passed across ${layouts.length} layouts; ${matches / 2} public-information solver wins.`);
+function roomFrom(text) {
+  return Number(text.match(/(10[1-6])号室[。へ]/g).at(-1).slice(0, 3));
+}
+
+function secure(game, room) {
+  const adjacent = neighbors(room);
+  assert.ok(game.place('capture', room));
+  assert.ok(game.place('capture', adjacent[0]));
+  if (adjacent.length === 2) assert.ok(game.place('block', room));
+  assert.ok(game.place('monitor', Math.min(room, adjacent[0])));
+  assert.ok(game.execute());
+  const { result } = game.view();
+  assert.equal(result.start, room);
+  assert.ok(result.caught);
+  assert.equal(result.identity, 105);
+  assert.ok([room, adjacent[0]].includes(result.end));
+  assert.equal(result.monitored, result.moved);
+  assert.ok(!game.execute());
+  assert.ok(!game.place('capture', room));
+  assert.ok(!game.endDay());
+  assert.ok(!game.enter(room));
+  assert.ok(!game.expire());
+  if (result.moved) {
+    assert.ok(game.view().traces.some(trace => trace.from === room && trace.night === 5));
+  }
+  return result;
+}
+
+const game = createGame();
+assert.deepEqual(game.view().rooms.map(room => room.number), [101, 102, 103, 104, 105, 106]);
+for (const room of [101, 102, 103, 104, 105]) assert.ok(game.enter(room));
+assert.equal(game.view().points, 0);
+assert.ok(!game.enter(106));
+assert.ok(game.enter(102));
+for (const [key] of exhibits) assert.ok(game.observe(key));
+assert.equal(game.view().notebook.length, 0);
+assert.equal(game.search('desk'), null);
+assert.equal(game.question(), null);
+assert.ok(game.note(102, '仮説'));
+assert.ok(game.endDay());
+assert.equal(game.view().points, 5);
+assert.ok(game.enter(106));
+assert.equal(game.view().points, 4);
+assert.equal(game.verify(), null);
+assert.ok(game.question());
+assert.equal(game.question(), null);
+assert.equal(game.view().points, 3);
+assert.equal(game.view().hypotheses[102], '仮説');
+assert.equal(game.view().notebook.find(entry => entry.category === '住人の証言').day, 2);
+assert.equal(game.view().result, null);
+for (const hidden of ['hideout', 'identity', 'alert', 'roomAlert']) assert.ok(!(hidden in game.view()));
+finishDays(game);
+assert.ok(game.expire());
+assert.equal(game.view().result.caught, false);
+assert.match(game.view().result.reason, /期限/);
+assert.equal(game.view().result.statements[0].honest, true);
+
+const context = { hideout: 103, visits: {}, searches: {}, roomAlert: {}, blocked: null, visibleCaptures: [] };
+const movement = (alert, changes = {}) => chooseMove({ ...context, ...changes, alert });
+assert.equal(movement(49), 103);
+assert.equal(movement(50), 103);
+assert.equal(movement(50, { visits: { 103: 1 } }), 102);
+assert.equal(movement(79, { visits: { 102: 3, 104: 2 } }), 103);
+assert.equal(movement(80, { visits: { 102: 3, 104: 2 } }), 104);
+assert.equal(movement(80, { hideout: 101, blocked: 101 }), 101);
+assert.equal(movement(80, { blocked: 102 }), 104);
+assert.equal(movement(80, { visibleCaptures: [102] }), 104);
+assert.equal(movement(80, { searches: { 102: 1 } }), 104);
+assert.equal(movement(80, { roomAlert: { 102: 30 } }), 104);
+assert.equal(movement(80, { notebook: ['private'], hypotheses: { 104: 'private' } }), 102);
+
+const quiet = createGame();
+assert.ok(quiet.enter(103));
+assert.ok(quiet.question());
+assert.ok(quiet.search('clock')); // 10 + 15 + 20 = 45
+assert.ok(quiet.endDay());
+assert.deepEqual(quiet.view().traces, []);
+
+const trail = createGame();
+assert.ok(trail.enter(103));
+assert.ok(trail.search('desk')); // 10 + 20 + 20 = 50
+assert.ok(trail.endDay());
+const [trace] = trail.view().traces;
+assert.equal(trace.from, 103);
+assert.equal(trace.night, 1);
+assert.equal(trace.to, undefined);
+assert.deepEqual(trail.view().mornings, [103]);
+assert.equal(trail.examineTrace(trace.id), null);
+assert.ok(trail.enter(102));
+assert.ok(trail.question());
+assert.ok(trail.view().notebook.some(entry => entry.category === '目撃情報'));
+assert.ok(trail.endDay());
+assert.ok(trail.enter(103));
+const clue = trail.examineTrace(trace.id);
+assert.equal(roomFrom(clue), 102);
+assert.equal(trail.examineTrace(trace.id), null);
+assert.ok(trail.view().notebook.some(entry => entry.day === 3 && entry.key === 'trace-0'));
+finishDays(trail);
+assert.ok(!secure(trail, roomFrom(clue)).moved);
+
+const operation = createGame();
+for (let day = 1; day <= 4; day++) assert.ok(operation.endDay());
+assert.ok(operation.enter(103));
+assert.ok(operation.search('desk'));
+assert.ok(operation.search('closet'));
+assert.ok(operation.endDay());
+assert.ok(operation.place('capture', 103));
+assert.ok(operation.place('capture', 104));
+assert.ok(!operation.place('capture', 102));
+assert.ok(operation.place('block', 102));
+assert.ok(!operation.place('monitor', 102));
+assert.ok(operation.place('monitor', 103));
+assert.ok(!operation.place('block', 106));
+assert.ok(operation.execute());
+assert.deepEqual(
+  [operation.view().result.caught, operation.view().result.start, operation.view().result.end, operation.view().result.monitored],
+  [true, 103, 104, true]
+);
+
+const failure = createGame();
+finishDays(failure);
+assert.ok(failure.place('capture', 106));
+assert.ok(failure.execute());
+assert.equal(failure.view().result.caught, false);
+const retry = createGame();
+assert.deepEqual([retry.view().day, retry.view().points, retry.view().phase, retry.view().notebook.length], [1, 5, 'investigation', 0]);
+
+let routeWins = 0;
+let movements = 0;
+const traceLabels = new Set();
+for (let seed = 1; seed <= 800; seed++) {
+  let stream = seed;
+  const random = max => {
+    stream = (Math.imul(stream, 1664525) + 1013904223) >>> 0;
+    return Math.floor(stream / 2 ** 32 * max);
+  };
+  const match = createGame();
+  for (let day = 1; day < 5; day++) {
+    let { traces } = match.view();
+    const seen = traces.length;
+    assert.equal(match.view().points, 5);
+    const focus = 101 + random(6);
+    for (let step = 0; step < 8; step++) {
+      if (random(4) === 0 || !match.view().current) match.enter(step === 0 ? focus : 101 + random(6));
+      else if (random(4) === 0) match.question();
+      else match.search(exhibits[random(exhibits.length)][0]);
+      assert.ok(match.view().points >= 0);
+    }
+    assert.ok(match.endDay());
+    ({ traces } = match.view());
+    assert.ok(traces.length === seen || traces.length === seen + 1);
+    if (traces.length > seen) {
+      const latest = traces.at(-1);
+      assert.equal(latest.night, day);
+      assert.deepEqual(match.view().mornings, [latest.from]);
+      assert.ok(match.view().notebook.some(entry => entry.category === '夜間の変化' && entry.day === day + 1 && entry.room === latest.from));
+      traceLabels.add(latest.label);
+      movements++;
+    }
+  }
+  const variant = seed % 2;
+  let hideout;
+  if (variant === 0) {
+    // Independent acoustic route remains affordable after any of the first four days.
+    if (!match.view().hasAudio) {
+      assert.ok(match.enter(103));
+      assert.ok(match.search('desk'));
+    }
+    assert.ok(match.enter(106));
+    hideout = roomFrom(match.verify());
+  } else {
+    const traces = match.view().traces;
+    const latest = traces.at(-1);
+    if (latest) {
+      assert.ok(match.enter(latest.from));
+      hideout = roomFrom(match.examineTrace(latest.id));
+      assert.ok(neighbors(latest.from).includes(hideout));
+    } else {
+      assert.ok(match.enter(103));
+      assert.ok(match.search('closet'));
+      hideout = 103;
+    }
+  }
+  assert.ok(match.endDay());
+  secure(match, hideout);
+  routeWins++;
+}
+assert.ok(movements > 0);
+assert.ok(traceLabels.size >= 2);
+
+const relentless = createGame();
+for (const room of [103, 102, 101, 102]) {
+  assert.ok(relentless.enter(room));
+  for (const item of ['clock', 'shoes', 'window']) assert.ok(relentless.search(item));
+  assert.ok(relentless.question()); // 85 alert forces an adjacent move.
+  assert.ok(relentless.endDay());
+  assert.equal(relentless.view().traces.at(-1).from, room);
+}
+assert.equal(new Set(relentless.view().traces.map(trace => trace.label)).size, 4);
+console.log(`Core scenarios passed; ${routeWins} seeded investigations won using two evidence routes (${movements} overnight trace events).`);

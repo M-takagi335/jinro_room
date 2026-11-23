@@ -12,12 +12,8 @@
   ];
   const order = people.slice(1);
   const name = id => people.find(person => person.id === id)?.name;
-  const actual = Object.freeze({ you: '占い師', ren: '人狼', mio: '村人', so: '狩人', towa: '記録係', yui: '村人' });
-  const assumed = { ren: '占い師' };
   const bell = '三つ目の鐘';
   const locations = { you: '北の礼拝堂', ren: '中庭', mio: '中庭', so: '礼拝堂の戸口', towa: '中庭', yui: '北の礼拝堂' };
-  const vision = { target: 'ren', role: actual.ren, place: locations.you };
-  const forgery = { target: 'you', role: '人狼', place: '西の書斎' };
   const guard = { target: 'you', event: '外廊下で板がきしんだ。戸口を越える者はいなかった。', seen: null };
   const ledger = { target: 'ren', place: locations.ren, action: '雨戸を閉めていた' };
   const sightings = {
@@ -53,21 +49,49 @@
   const unknown = () => say('それについては知りません。');
   const at = (id, place) => say(bell + 'が鳴った時、' + name(id) + 'は' + place + 'にいました。', position(id, place));
 
-  function answer(id, question, history) {
+  const cases = [
+    {
+      id: 'storm', title: '雨戸の証言', hint: '鐘が鳴った瞬間の居場所を照合する。',
+      actual: { you: '占い師', ren: '人狼', mio: '村人', so: '狩人', towa: '記録係', yui: '村人' },
+      assumed: { ren: '占い師' }, reader: 'you', reading: 'ren', forgedReading: true,
+      conclusion: '残るNPCは村人2人、狩人1人、記録係1人。空いているのは占い師だけ。'
+    },
+    {
+      id: 'seal', title: '銀の封印', hint: '館の検査記録と、昨夜の占いを照合する。',
+      actual: { you: '人狼', ren: '占い師', mio: '村人', so: '狩人', towa: '記録係', yui: '村人' },
+      assumed: {}, reader: 'ren', reading: 'you',
+      verified: { person: 'ren', text: '公開検査記録 · 銀の封印を通過した蓮は人狼ではありません。この判定は確実です。' }
+    },
+    {
+      id: 'guard', title: '閉ざされた戸口', hint: '護衛の話と、同じ時刻の目撃を照合する。',
+      actual: { you: '狩人', ren: '人狼', mio: '村人', so: '占い師', towa: '記録係', yui: '村人' },
+      assumed: { ren: '狩人' }, reader: 'so', reading: 'yui',
+      conclusion: '残るNPCは村人2人、占い師1人、記録係1人。空いているのは狩人だけ。'
+    }
+  ];
+  const catalog = cases.map(({ id, title, hint }) => ({ id, title, hint }));
+  const falsePlace = '西の書斎';
+
+  function answer(scenario, id, question, history) {
+    const { actual, assumed, reader, reading, forgedReading } = scenario;
+    const liar = actual[id] === '人狼';
     const sight = sightings[id];
-    const divination = id === 'ren' ? forgery : vision;
+    const divination = liar && forgedReading
+      ? { target: 'you', role: '人狼', place: falsePlace }
+      : { target: reading, role: actual[reading], place: locations[reader] };
+    const protectedPerson = liar ? 'mio' : guard.target;
     switch (question) {
       case 'claim': {
         const role = assumed[id] || actual[id];
         return say('私は' + role + 'です。', roleFact(id, role));
       }
       case 'night':
-        return id === 'ren'
-          ? say(bell + 'が鳴った時は、西の書斎で水盤をのぞいていました。', position(id, forgery.place))
+        return liar
+          ? say(bell + 'が鳴った時は、' + falsePlace + 'にいました。', position(id, falsePlace))
           : say(bell + 'の時は、' + locations[id] + 'にいました。', position(id, locations[id]));
       case 'about':
         if (id === 'ren') return say('今朝、暖炉のそばで目を覚ましたのを見ました。');
-        if (id === 'so') return say('昨夜、あなたのそばにいました。護衛の依頼があったので。');
+        if (actual[id] === '狩人') return say('昨夜、あなたのそばにいました。護衛の依頼があったので。');
         if (sight?.target === 'you') return at('you', sight.place);
         return unknown();
       case 'suspect':
@@ -89,13 +113,13 @@
       case 'ritual':
         return say(bell + 'が鳴った瞬間に、' + divination.place + 'で水盤をのぞきました。', position(id, divination.place));
       case 'guarded':
-        return say('護衛したのは' + name(guard.target) + 'です。');
+        return say('護衛したのは' + name(protectedPerson) + 'です。');
       case 'incident':
-        return say(guard.event);
+        return liar ? say(bell + 'の時は、西の書斎の戸口にいました。', position(id, falsePlace)) : say(guard.event);
       case 'guardSeen':
         return guard.seen ? say(guard.seen) : say('顔を確認できた人はいません。');
       case 'guardedMe':
-        return say('はい。昨夜、あなたを護衛しました。');
+        return say(protectedPerson === 'you' ? 'はい。昨夜、あなたを護衛しました。' : 'いいえ。昨夜は別の人を護衛しました。');
       case 'logged':
         return say('帳面に記したのは' + name(ledger.target) + 'です。' + bell + 'の時に' + ledger.action + '。');
       case 'logWhere':
@@ -129,6 +153,7 @@
       for (const entry of entries) {
         if (layout[entry.speaker] === '人狼') continue;
         for (const fact of entry.facts) {
+          if (fact.kind === 'notWolf' && layout[fact.person] === '人狼') return false;
           if (fact.kind === 'role' && layout[fact.person] !== fact.role) return false;
           if (fact.kind === 'place') {
             const key = fact.time + ':' + fact.person;
@@ -141,7 +166,10 @@
     }).map(layout => ({ ...layout }));
   }
 
-  function createGame() {
+  function createGame(caseId = 'storm') {
+    const scenario = cases.find(entry => entry.id === caseId) || cases[0];
+    const { actual, verified } = scenario;
+    const publicEvidence = verified ? [{ facts: [{ kind: 'notWolf', person: verified.person }] }] : [];
     let index = 0;
     let remaining = 8;
     let phase = 'conversation';
@@ -160,11 +188,11 @@
 
     return {
       view() {
-        const possible = infer(transcript);
+        const possible = infer([...publicEvidence, ...transcript]);
         const candidates = Object.fromEntries(people.map(({ id }) =>
           [id, roles.filter(role => possible.some(layout => layout[id] === role))]));
         return JSON.parse(JSON.stringify({
-          phase, index, current: phase === 'conversation' ? order[index] : null, rules, people, roles,
+          phase, caseId: scenario.id, caseTitle: scenario.title, publicRecord: verified?.text, index, current: phase === 'conversation' ? order[index] : null, rules, people, roles,
           remaining, claims, notes, transcript, candidates, layouts: possible.length, result,
           questions: available().map(([id, text]) => ({ id, text, cost: Number(id !== 'claim') }))
         }));
@@ -173,7 +201,7 @@
         const option = available().find(([id]) => id === question);
         if (!option || (question !== 'claim' && remaining === 0)) return false;
         const speaker = order[index].id;
-        const reply = answer(speaker, question, transcript);
+        const reply = answer(scenario, speaker, question, transcript);
         if (question === 'claim') claims[speaker] = reply.facts[0].role;
         else remaining--;
         transcript.push({ speaker, id: question, question: option[1], ...reply });
@@ -193,29 +221,48 @@
       submit(self, guesses = {}) {
         if (phase !== 'verdict' || !roles.includes(self)) return false;
         const optional = order.filter(person => roles.includes(guesses[person.id]));
-        const lies = [
-          { questions: '役職確認', text: '蓮は占い師を名乗った。実際には人狼。', ids: ['claim'] },
-          { questions: '昨夜の行動・占いの状況', text: '西の書斎にいたと話したが、三つ目の鐘の時は中庭にいた。', ids: ['night', 'ritual'] },
-          { questions: '占いの対象・結果', text: 'あなたを占い、人狼と出たと話したが、蓮は誰も占っていない。', ids: ['divined', 'reading', 'divinedMe'] }
-        ].map(lie => ({ ...lie, heard: transcript.some(entry => entry.speaker === 'ren' && lie.ids.includes(entry.id)) }));
+        const wolf = people.find(person => actual[person.id] === '人狼');
+        const lies = [];
+        if (wolf.id !== 'you') {
+          lies.push(
+            { questions: '役職確認', text: wolf.name + 'は' + scenario.assumed[wolf.id] + 'を名乗った。実際には人狼。', ids: ['claim'] },
+            { questions: '昨夜の行動', text: '西の書斎にいたと話したが、鐘の時は中庭にいた。', ids: ['night', 'ritual', 'incident'] }
+          );
+          if (scenario.forgedReading) lies.push({
+            questions: '占いの対象・結果', text: 'あなたを占い、人狼と出たと話したが、蓮は誰も占っていない。',
+            ids: ['divined', 'reading', 'divinedMe']
+          });
+          else lies.push({
+            questions: '護衛対象', text: '澪を護衛したという偽の申告。蓮は護衛をしていない。', ids: ['guarded', 'guardedMe']
+          });
+        }
+        const knowledge = {
+          you: '鐘の時は北の礼拝堂にいた。目覚めた時には役職の記憶を失っていた。',
+          ren: '鐘の時は中庭で雨戸を閉めていた。今朝あなたが目覚めるところを見た。',
+          mio: '鐘の時に中庭で蓮が雨戸に手をかけるのを見た。',
+          so: '鐘の時は礼拝堂の戸口にいた。',
+          towa: '鐘の時に蓮が中庭で雨戸を閉めたことを帳面に記録した。',
+          yui: '鐘の時に北の礼拝堂であなたが火の消えたランタンを持っているのを見た。'
+        };
+        knowledge[scenario.reader] += name(scenario.reading) + 'を占い、' + actual[scenario.reading] + 'と出た。';
+        const hunter = people.find(person => actual[person.id] === '狩人').id;
+        knowledge[hunter] += (hunter === 'you' ? '澪' : 'あなた') + 'を護衛していた。' + guard.event;
+        const explanation = verified ? [
+          '公開検査記録で、蓮が人狼ではないと確定している。',
+          '蓮は占い師を名乗り、占い結果ではあなたが人狼だったと答える。人狼以外は知っていることを正直に話す。',
+          'したがって、この事件でのあなたの役職は人狼。'
+        ] : [
+          '蓮に「昨夜の行動」を聞く。蓮は三つ目の鐘の時に西の書斎にいたと言う。',
+          '澪には「どこで見ましたか？」、十和には「その人物はどこにいましたか？」を聞く。二人とも同じ鐘の時に蓮が中庭にいたと答える。',
+          '蓮が正直なら、澪と十和の両方が嘘をついたことになる。人狼は一人なので、蓮が人狼。',
+          scenario.conclusion
+        ];
         result = {
-          won: self === actual.you, self, roles: actual, lies,
+          won: self === actual.you, self, roles: actual,
+          lies: lies.map(lie => ({ ...lie, heard: transcript.some(entry => entry.speaker === wolf.id && lie.ids.includes(entry.id)) })),
           answered: optional.length, score: optional.filter(person => guesses[person.id] === actual[person.id]).length,
-          events: '三つ目の鐘が鳴った時、あなたは北の礼拝堂、蓮は中庭にいた。護衛中の奏は外廊下の物音を聞いた。今朝、蓮は暖炉のそばであなたが目を覚ますのを見た。',
-          knowledge: {
-            you: '北の礼拝堂で蓮を占い、人狼と出た。目覚めた時にはその記憶も失っていた。',
-            ren: '自分が人狼で、鐘の時は中庭で雨戸を閉めていた。今朝あなたが目覚めるところを見た。',
-            mio: '鐘の時に中庭で蓮を見た。雨戸に手をかけていた。',
-            so: 'あなたを護衛していた。外廊下で板がきしんだが、誰の顔も確認できなかった。',
-            towa: '鐘の時に蓮が中庭で雨戸を閉めたことを帳面に記録した。',
-            yui: '鐘の時に北の礼拝堂であなたを見た。火の消えたランタンを持っていた。'
-          },
-          explanation: [
-            '蓮には「占いの状況」または「昨夜の行動」を聞く。蓮は三つ目の鐘の時に西の書斎にいたと言う。',
-            '澪には「どこで見ましたか？」、十和には「その人物はどこにいましたか？」を聞く。二人とも同じ鐘の時に蓮が中庭にいたと答える。',
-            '蓮が正直なら、澪と十和の両方が嘘をついたことになる。人狼は一人なので、蓮が人狼。',
-            '残るNPCの申告は村人2人、狩人1人、記録係1人。公開された内訳で空いているのは占い師だけ。'
-          ]
+          events: '三つ目の鐘が鳴った時、あなたは北の礼拝堂、蓮は中庭にいた。今朝、蓮は暖炉のそばであなたが目を覚ますのを見た。',
+          knowledge, explanation
         };
         phase = 'result';
         return true;
@@ -223,7 +270,7 @@
     };
   }
 
-  const api = { createGame, infer };
+  const api = { createGame, infer, catalog };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else globalThis.Mansion = api;
 })();

@@ -129,7 +129,7 @@ function click(act, value = '') {
   handlers.click({ target: { closest: () => ({ dataset: { act, value } }) } });
 }
 click('intro');
-click('start');
+click('start', 'storm');
 for (const id of ['ren', 'mio', 'so', 'towa', 'yui']) {
   click('ask', 'claim');
   for (const question of route[id] || []) click('ask', question);
@@ -144,6 +144,46 @@ handlers.submit({ preventDefault() {}, target: {
 assert.match(app.innerHTML, /正解 · 記憶/);
 click('explanation');
 assert.match(app.innerHTML, /事件の解説/);
+click('cases');
+click('start', 'seal');
+assert.match(app.innerHTML, /公開検査記録/);
+click('ask', 'claim');
+click('ask', 'reading');
+for (let i = 0; i < 5; i++) {
+  if (i) click('ask', 'claim');
+  click('next');
+}
+handlers.submit({ preventDefault() {}, target: {
+  id: 'verdict', querySelectorAll: () => [{ dataset: { id: 'you' }, value: '人狼' }]
+} });
+assert.match(app.innerHTML, /正解 · 記憶/);
+assert.match(app.innerHTML, /真の役職は 人狼/);
 click('retry');
 assert.match(app.innerHTML, /1 \/ 5人目/);
-console.log('Passed: 360 alternative layouts, unique 3-question solution, NPC knowledge and budget, verdicts, retry, standalone UI wiring.');
+assert.match(app.innerHTML, /銀の封印/);
+
+function solveCase(caseId, askByPerson, role, cost) {
+  const match = createGame(caseId);
+  while (match.view().phase === 'conversation') {
+    const id = match.view().current.id;
+    assert.ok(match.ask('claim'));
+    for (const q of askByPerson[id] || []) assert.ok(match.ask(q));
+    assert.ok(match.next());
+  }
+  assert.equal(match.view().remaining, 8 - cost);
+  assert.deepEqual(match.view().candidates.you, [role]);
+  assert.equal(match.view().layouts, 1);
+  assert.ok(match.submit(role));
+  assert.ok(match.view().result.won);
+  assert.equal(match.view().result.roles.you, role);
+  return match.view();
+}
+const sealed = solveCase('seal', { ren: ['reading'] }, '人狼', 1);
+assert.ok(infer(sealed.transcript).length > 1);
+assert.equal(sealed.result.lies.length, 0);
+const guarded = solveCase('guard', { ren: ['incident'], mio: ['where'], towa: ['logWhere'] }, '狩人', 3);
+assert.equal(guarded.claims.ren, '狩人');
+assert.equal(guarded.result.roles.so, '占い師');
+assert.equal(guarded.result.roles.ren, '人狼');
+
+console.log('Passed: 360 alternative layouts, three distinct, uniquely solvable cases, NPC knowledge and budget, verdicts, retry, standalone UI wiring.');

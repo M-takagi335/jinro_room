@@ -5,6 +5,7 @@
   let screen = 'title';
   let showNote = false;
   let tab = 'result';
+  let selectedCase = 'storm';
   const guesses = {};
   const escape = value => String(value).replace(/[&<>"']/g, key =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[key]);
@@ -66,16 +67,17 @@
         <ol>${r.explanation.map(step => '<li>' + escape(step) + '</li>').join('')}</ol>
         <h3>各人物が知っていたこと</h3>
         <ul>${state.people.map(person => '<li><strong>' + person.name + '</strong> · ' + escape(r.knowledge[person.id]) + '</li>').join('')}</ul>
-        <h3>人狼の嘘</h3><ul>${r.lies.map(lie => '<li><strong>' + escape(lie.questions) + '</strong> · ' + escape(lie.text) +
-          ' <small>（' + (lie.heard ? '質問済み' : '会話では未確認') + '）</small></li>').join('')}</ul>
-        ${button('result', '結果へ戻る')}${button('retry', 'もう一度遊ぶ', '', 'primary')}</section>`;
+        <h3>人狼の嘘</h3>${r.lies.length ? '<ul>' + r.lies.map(lie => '<li><strong>' + escape(lie.questions) + '</strong> · ' + escape(lie.text) +
+          ' <small>（' + (lie.heard ? '質問済み' : '会話では未確認') + '）</small></li>').join('') + '</ul>' :
+          '<p>この事件では、聞き取り相手の5人は全員、知っていることを正直に話しました。</p>'}
+        ${button('result', '結果へ戻る')}${button('retry', 'この事件をやり直す', '', 'primary')}${button('cases', '別の事件を選ぶ')}</section>`;
     }
     return `<section class="panel result ${r.won ? 'win' : 'loss'}">
       <h2>${r.won ? '正解 · 記憶の手がかりを掴んだ' : '不正解 · 証言を見直そう'}</h2>
       <p>あなたの回答は ${escape(r.self)}。真の役職は ${escape(r.roles.you)}。</p>
       <p>NPCの役職は5人中${r.score}人正解（${r.answered}人に回答）。</p>
       <ul>${state.people.map(person => '<li>' + escape(person.name) + ' · ' + labelRole(r.roles[person.id]) + '</li>').join('')}</ul>
-      ${button('explanation', '事件の解説を読む', '', 'primary')}${button('retry', 'もう一度遊ぶ')}</section>`;
+      ${button('explanation', '事件の解説を読む', '', 'primary')}${button('retry', 'この事件をやり直す')}${button('cases', '別の事件を選ぶ')}</section>`;
   }
 
   function render(focus) {
@@ -87,14 +89,17 @@
         : `<section class="panel intro"><h1>昨夜、何があった？</h1>
           <p>聞き取りは一人ずつ。役職を名乗ってもらうと、その申告に応じた質問が開きます。</p>
           <ul>${Mansion.createGame().view().rules.map(rule => '<li>' + escape(rule) + '</li>').join('')}</ul>
-          ${button('start', '聞き取りを始める', '', 'primary')}${button('title', 'タイトルへ')}</section>`;
+          <h2>事件を選ぶ</h2><div class="case-list">${Mansion.catalog.map(entry =>
+            button('start', '<strong>' + escape(entry.title) + '</strong><small>' + escape(entry.hint) + '</small>', entry.id)).join('')}</div>
+          ${button('title', 'タイトルへ')}</section>`;
     } else {
       const state = game.view();
       root.innerHTML = `<header class="bar"><h1>人狼の館</h1>
-        <p>${state.phase === 'conversation' ? (state.index + 1) + ' / 5人目 · 残りの質問 <b>' + state.remaining + ' / 8</b>' :
+        <p>${escape(state.caseTitle)} · ${state.phase === 'conversation' ? (state.index + 1) + ' / 5人目 · 残りの質問 <b>' + state.remaining + ' / 8</b>' :
           state.phase === 'verdict' ? '最終回答' : '答え合わせ'}</p>
         ${button('note', showNote ? 'ゲーム画面へ戻る' : '推理ノート')}${button('rules', '公開ルール')}</header>
         <aside id="rules" class="panel" hidden><h2>公開ルール</h2><ul>${state.rules.map(rule => '<li>' + escape(rule) + '</li>').join('')}</ul></aside>
+        ${state.publicRecord ? '<p class="public-record">' + escape(state.publicRecord) + '</p>' : ''}
         ${showNote ? notebook(state) : state.phase === 'conversation' ? conversation(state) :
           state.phase === 'verdict' ? verdict(state) : result(state)}`;
     }
@@ -107,7 +112,7 @@
   }
 
   function start() {
-    game = Mansion.createGame();
+    game = Mansion.createGame(selectedCase);
     showNote = false;
     tab = 'result';
     for (const id of Object.keys(guesses)) delete guesses[id];
@@ -117,7 +122,11 @@
     if (!target || target.disabled) return;
     const { act, value } = target.dataset;
     if (act === 'intro' || act === 'title') screen = act;
-    else if (act === 'start' || act === 'retry') start();
+    else if (act === 'cases') { game = null; screen = 'intro'; }
+    else if (act === 'start' || act === 'retry') {
+      if (act === 'start') selectedCase = value;
+      start();
+    }
     else if (act === 'note') showNote = !showNote;
     else if (act === 'ask') game.ask(value);
     else if (act === 'next') game.next();
